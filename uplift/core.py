@@ -2,7 +2,7 @@ from .helpers import make_dataframe
 
 def obtener_recomendaciones_implementadas(conn_output, created_at):
     query_recomendaciones = """
-        SELECT id, created_at, val_actual, description, n_molino 
+        SELECT id, updated_at , val_actual, description, n_molino 
         from recom_implemented
         WHERE
         created_at = '{created_at}';
