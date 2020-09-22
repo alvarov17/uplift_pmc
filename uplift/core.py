@@ -30,3 +30,19 @@ tph_dict = {
     2: 'MOL:WIC44B_MINERAL',
     1: 'MOL:WIC44A_MINERAL'
 }
+
+molinos_dict = {
+    13: 'MUN',
+    12: 'M12',
+    11: 'M11',
+    10: 'M10',
+    9: 'M9',
+    8: 'M8',
+    7: 'M7',
+    6: 'M6',
+    5: 'M5',
+    4: 'M4',
+    3: 'M3',
+    2: 'M2',
+    1: 'M1'
+}
