@@ -12,9 +12,21 @@ parser = argparse.ArgumentParser(description="Obtiene uplift obtenido por el rec
 parser.add_argument('-fi', '--fecha_inicio',
                     metavar='fecha_inicio',
                     type=str,
-                    required=True,
                     default=(datetime.now() + timedelta(hours=-2 * 24)
                              ).strftime("%Y-%m-%d %H:%M"))
+
+parser.add_argument('--baseline_m1_m8',
+                    metavar='baseline',
+                    type=int,
+                    default=170)
+parser.add_argument('--baseline_m9_m12',
+                    metavar='baseline',
+                    type=int,
+                    default=220)
+parser.add_argument('--baseline_mun',
+                    metavar='baseline',
+                    type=int,
+                    default=850)
 
 args = parser.parse_args()
 
@@ -67,6 +79,10 @@ def main():
 
     df = df.resample('4H', on='turno').last().drop(columns=['turno'])
     df.reset_index(level=0, inplace=True)
+
+    base_line_m1_m8 = args.baseline_m1_m8
+    base_line_m9_m12 = args.baseline_m9_m12
+    base_line_mun = args.baseline_mun
 
     for index, (turno, created_at) in df.iterrows():
 
@@ -130,7 +146,14 @@ def main():
             for index, (bloque, tag, promedio_tph, promedio_hl) in bloques.iterrows():
 
                 if index == 0:
-                    promedio_tph_inicial = promedio_tph
+                    if molino == 'M1' or molino == 'M2' or molino == 'M3' \
+                            or molino == 'M4' or molino == 'M5' or molino == 'M6' \
+                            or molino == 'M7' or molino == 'M8':
+                        promedio_tph_inicial = base_line_m1_m8
+                    elif molino == 'M9' or molino == 'M10' or molino == 'M11' or molino == 'M12':
+                        promedio_tph_inicial = base_line_m9_m12
+                    elif molino == 'MUN':
+                        promedio_tph_inicial = base_line_mun
                     continue
 
                 if caso == 1:
@@ -151,9 +174,6 @@ def main():
         resultados = pd.DataFrame(columns=resultados.keys(), data=[resultados.values])
 
         resultados.to_sql(name='uplift', con=sql_alchemy_output, index=False,  if_exists='append')
-
-        #for index, row in resultados.iteritems():
-        #    import ipdb; ipdb.set_trace()
 
 
 if __name__ == '__main__':
