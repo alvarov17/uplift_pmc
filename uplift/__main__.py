@@ -2,8 +2,9 @@ import psycopg2
 from datetime import datetime, timedelta
 import pandas as pd
 
-from .helpers import make_dataframe, exec_query
-from .core import obtener_recomendaciones_implementadas, tph_dict, molinos_dict
+from .helpers import exec_query
+from .core import obtener_recomendaciones_implementadas, tph_dict, molinos_dict, obtener_tph_turno,\
+    obtener_bloque_inicial, obtener_horarios_recomendaciones
 from sqlalchemy import create_engine
 
 import argparse
@@ -14,19 +15,15 @@ parser.add_argument('-fi', '--fecha_inicio',
                     type=str,
                     default=(datetime.now() + timedelta(hours=-2 * 24)
                              ).strftime("%Y-%m-%d %H:%M"))
+parser.add_argument('-fib', '--fecha_inicio_bloque_0',
+                    metavar='fecha_inicio_primer_bloque',
+                    type=int,
+                    default=-15)
 
-parser.add_argument('--baseline_m1_m8',
-                    metavar='baseline',
+parser.add_argument('-tb', '--tamaño_bloque',
+                    metavar='tamaño de los bloques',
                     type=int,
-                    default=170)
-parser.add_argument('--baseline_m9_m12',
-                    metavar='baseline',
-                    type=int,
-                    default=220)
-parser.add_argument('--baseline_mun',
-                    metavar='baseline',
-                    type=int,
-                    default=850)
+                    default=15)
 
 args = parser.parse_args()
 
@@ -47,46 +44,18 @@ def main():
 
     output_data_conn.autocommit = True
 
-
-    ft = (datetime.now() + timedelta(hours=-3)).strftime("%Y-%m-%d %H:%M")
-
     exec_query(conn=output_data_conn, query="""delete from uplift where \"TimeStamp\" >= '{fi}'""".format(fi=args.fecha_inicio))
 
-    query = """
-        SELECT
-            mcmc.created_at as turno,
-            ri.created_at
-        FROM (
-            SELECT
-                created_at
-            FROM
-                "mcmc_recommendations_ALL_VIEW"
-            GROUP BY
-                created_at) mcmc
-            LEFT JOIN (
-                SELECT
-                    created_at
-                FROM
-                    recom_implemented
-                GROUP BY
-                    created_at) ri ON mcmc.created_at = ri.created_at
-            WHERE mcmc.created_at >= '{fi}'
-        ORDER BY
-            mcmc.created_at ASC;
-    """.format(fi=args.fecha_inicio)
-
-    df = make_dataframe(conn=output_data_conn, query=query)
-
+    df = obtener_horarios_recomendaciones(output_data_conn=output_data_conn, fecha_inicio=args.fecha_inicio)
     df = df.resample('4H', on='turno').last().drop(columns=['turno'])
     df.reset_index(level=0, inplace=True)
 
-    base_line_m1_m8 = args.baseline_m1_m8
-    base_line_m9_m12 = args.baseline_m9_m12
-    base_line_mun = args.baseline_mun
-
     for index, (turno, created_at) in df.iterrows():
 
-        resultado = 0
+        try:
+            siguiente_turno = df.iloc[index + 1]['turno']
+        except IndexError:
+            exit()
 
         if created_at is pd.NaT:
             exec_query(conn=output_data_conn, query=f"insert into uplift (\"TimeStamp\") values ('{turno}')")
@@ -105,71 +74,51 @@ def main():
 
         resultados.loc["TimeStamp"] = turno
 
-        for index_recomendacion, recomendacion in recomendaciones_implementadas.iterrows():
+        for n_molino, molino in molinos_dict.items():
 
-            molino = molinos_dict[recomendacion.n_molino]
+            recomendaciones = recomendaciones_implementadas.query('n_molino == @n_molino')
 
-            query_limites = """
-                SELECT
-                t."timestamp",
-                l.tag,
-                t."value",
-                hl."value" AS hl
-            FROM
-                public.limits_tags l
-                LEFT JOIN input_tags t ON t.tag = l.tag
-                LEFT JOIN input_tags ll ON ll.tag = l.tagll
-                    AND t. "timestamp" = ll. "timestamp"
-                LEFT JOIN input_tags hl ON hl.tag = l.taghl
-                    AND t. "timestamp" = hl. "timestamp"
-            WHERE
-                t.tag = '{tag}' and
-                t. "timestamp" BETWEEN '{updated_at}'::timestamp - interval '20m'
-                AND '{updated_at}'::timestamp + interval '4h';
-                  """.format(tag=tph_dict[recomendacion['n_molino']], updated_at=recomendacion['updated_at'])
+            if len(recomendaciones) == 0:
+                continue
 
-            datos_x_minuto = make_dataframe(conn=process_data_conn, query=query_limites)
+            updated_at = recomendaciones[recomendaciones['updated_at'] == recomendaciones['updated_at'].min()].iloc[0]['updated_at']
 
-            bloques = datos_x_minuto.resample('15min', on='timestamp', label='left').last().drop(columns=['timestamp'])\
-                .rename_axis('bloque').rename(columns={'value':'promedio_tph', 'hl':'promedio_hl'})
+            (bloque_inicial, vacio) = obtener_bloque_inicial(conn_process=process_data_conn,
+                                                    fecha_inicio=created_at,
+                                                    hora_turno=created_at,
+                                                    tag=tph_dict[n_molino])
 
-            bloques.reset_index(level=0, inplace=True)
+            if vacio:
+                continue
 
-            promedio_tph_inicial = 0
-            promedio_hl_inicial = 0
+            (bloques, vacio) = obtener_tph_turno(conn_process=process_data_conn,
+                                               fi=created_at,
+                                               ft=siguiente_turno,
+                                               tag=tph_dict[n_molino],
+                                               tamaño_bloque=args.tamaño_bloque)
+
+            if vacio:
+                continue
+
+            promedio_tph_inicial = bloque_inicial.agg('mean')['value']
+            promedio_hl_inicial = bloque_inicial.agg('mean')['hl']
 
             if promedio_tph_inicial >= promedio_hl_inicial * .9:
                 caso = 1
             else:
                 caso = 2
 
-            for index, (bloque, tag, promedio_tph, promedio_hl) in bloques.iterrows():
+            fn = lambda row: (row.promedio_tph - promedio_tph_inicial) * args.tamaño_bloque / 60
 
-                if index == 0:
-                    if molino == 'M1' or molino == 'M2' or molino == 'M3' \
-                            or molino == 'M4' or molino == 'M5' or molino == 'M6' \
-                            or molino == 'M7' or molino == 'M8':
-                        promedio_tph_inicial = base_line_m1_m8
-                    elif molino == 'M9' or molino == 'M10' or molino == 'M11' or molino == 'M12':
-                        promedio_tph_inicial = base_line_m9_m12
-                    elif molino == 'MUN':
-                        promedio_tph_inicial = base_line_mun
-                    continue
+            res = bloques.apply(fn, axis=1)
 
-                if caso == 1:
-                    delta = (promedio_tph - promedio_tph_inicial) / 60
-                    if delta > 0:
-                        resultado += delta
-                    else:
-                        resultado += 0
-                    resultados.loc[f"caso{caso}{molino}"] = resultado + resultados.loc[f"caso{caso}{molino}"]
-                elif caso == 2:
-                    delta = (promedio_tph - promedio_tph_inicial) / 60
-                    if delta > 0:
-                        resultado += delta
-                    else:
-                        resultado += 0
-                    resultados.loc[f"caso{caso}{molino}"] = resultado + resultados.loc[f"caso{caso}{molino}"]
+            resultado = res.sum()
+
+            if caso == 1:
+                resultados.loc[f"caso{caso}{molino}"] += resultado
+            elif caso == 2:
+                resultados.loc[f"caso{caso}{molino}"] += resultado
+
 
         resultados = pd.DataFrame(columns=resultados.keys(), data=[resultados.values])
 
