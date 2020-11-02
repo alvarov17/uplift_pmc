@@ -24,11 +24,11 @@ def obtener_bloque_inicial(conn_process, fecha_inicio, hora_turno, tag):
             SELECT
                 t."timestamp",
                 l.tag,
-                CASE WHEN t.tag != 'MU:280_WIC_8778'
-                AND t."value" > 150 then t."value"
-                WHEN t.tag = 'MU:280_WIC_8778' 
-                AND t."value" > 750 then t."value"
-                ELSE NULL end as "value",
+                case 
+                when l.related_equipment = 13 and t.value > 700 then t.value
+                when l.related_equipment >= 9 and l.related_equipment <= 12 and t.value > 160 then t.value
+                when l.related_equipment < 9 and t.value > 155 then t.value
+                else null end as value,
                 hl. "value" AS hl
             FROM
                 public.limits_tags l
@@ -39,7 +39,7 @@ def obtener_bloque_inicial(conn_process, fecha_inicio, hora_turno, tag):
                     AND t. "timestamp" = hl. "timestamp"
             WHERE
             t.tag = '{tag}' and
-            t. "timestamp" BETWEEN '{fecha_inicio}'::timestamp - interval '15m'
+            t. "timestamp" BETWEEN '{fecha_inicio}'::timestamp - interval '60m'
             AND '{fecha_inicio}'::timestamp;
               """.format(tag=tag, fecha_inicio=fecha_inicio, hora_turno=hora_turno)
     df = make_dataframe(conn=conn_process, query=sql)
@@ -61,13 +61,13 @@ def obtener_bloque_inicial(conn_process, fecha_inicio, hora_turno, tag):
 def obtener_tph_turno(conn_process, fi, ft, tag, tamaño_bloque):
     sql = """
         SELECT
-         t."timestamp",
+            t."timestamp",
             l.tag,
-            CASE WHEN t.tag != 'MU:280_WIC_8778'
-            AND t."value" > 100 then t."value"
-            WHEN t.tag = 'MU:280_WIC_8778' 
-            AND t."value" > 500 then t."value"
-            ELSE NULL end as "value",
+            case 
+            when l.related_equipment = 13 and t.value > 700 then t.value
+            when l.related_equipment >= 9 and l.related_equipment <= 12 and t.value > 160 then t.value
+            when l.related_equipment < 9 and t.value > 155 then t.value
+            else null end as value,
             hl. "value" AS hl
         FROM
             public.limits_tags l

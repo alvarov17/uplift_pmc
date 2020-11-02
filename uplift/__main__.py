@@ -18,12 +18,12 @@ parser.add_argument('-fi', '--fecha_inicio',
 parser.add_argument('-fib', '--fecha_inicio_bloque_0',
                     metavar='fecha_inicio_primer_bloque',
                     type=int,
-                    default=-15)
+                    default=-60)
 
 parser.add_argument('-tb', '--tamaño_bloque',
                     metavar='tamaño de los bloques',
                     type=int,
-                    default=15)
+                    default=60)
 
 args = parser.parse_args()
 
@@ -92,7 +92,7 @@ def main():
                 continue
 
             (bloques, vacio) = obtener_tph_turno(conn_process=process_data_conn,
-                                               fi=created_at,
+                                               fi=updated_at,
                                                ft=siguiente_turno,
                                                tag=tph_dict[n_molino],
                                                tamaño_bloque=args.tamaño_bloque)
@@ -120,8 +120,8 @@ def main():
                 resultados.loc[f"caso{caso}{molino}"] += resultado
 
 
-        resultados = pd.DataFrame(columns=resultados.keys(), data=[resultados.values])
 
+        resultados = pd.DataFrame(columns=resultados.keys(), data=[resultados.values])
         resultados.to_sql(name='uplift', con=sql_alchemy_output, index=False,  if_exists='append')
 
 
